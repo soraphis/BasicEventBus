@@ -1,3 +1,7 @@
+
+
+using Unity.Collections.LowLevel.Unsafe;
+
 namespace EventBus
 {
     using System;
@@ -5,7 +9,6 @@ namespace EventBus
     using System.Collections.Generic;
     using UnityEngine;
     using EventBus.Internal;
-    using System.Collections;
     using UnityEngine.Pool;
 
 #if UNITY_EDITOR
@@ -21,8 +24,7 @@ namespace EventBus
     {
         
     }
-
-
+    
     public static class EventBusUtility
     {
         public static IReadOnlyList<Type> EventTypes { get; private set; }
@@ -91,20 +93,58 @@ namespace EventBus
 
         public static void ClearAllBuses()
         {
+            if(StaticEventBusesTypes == null) StaticEventBusesTypes = new List<Type>();
             for (int i = 0; i < StaticEventBusesTypes.Count; i++)
             {
                 var type = StaticEventBusesTypes[i];
                 var clearMethod = type.GetMethod("Clear", BindingFlags.Static | BindingFlags.NonPublic);
-                clearMethod.Invoke(null, null);
+                clearMethod?.Invoke(null, null);
             }
         }
     }
 
+    public static class EventBusHelper
+    {
+        public static void Raise(IEvent ev)
+        {
+#if UNITY_EDITOR
+            if (EventBusUtility.PlayModeState == PlayModeStateChange.ExitingPlayMode)
+                return;
+#endif
+            if (ev == null)
+                return;
+        
+            var eventType = ev.GetType();
+            var genericBusType = typeof(EventBus<>).MakeGenericType(eventType);
+            var raiseMethod = genericBusType.GetMethod("Raise", new[] { eventType });
+            raiseMethod?.Invoke(null, new object[] { ev });
+        }
+    }
+    
+    internal struct EventBindingMutation<T> where T : struct, IEvent
+    {
+        public enum MutationType{ Register, Unregister }
+        public MutationType Type;
+        public EventBinding<T> Binding;
+        
+        public static EventBindingMutation<T> CreateRegister(EventBinding<T> binding)
+        {
+            return new EventBindingMutation<T>() { Type = MutationType.Register, Binding = binding };
+        }
+        
+        public static EventBindingMutation<T> CreateUnregister(EventBinding<T> binding)
+        {
+            return new EventBindingMutation<T>() { Type = MutationType.Unregister, Binding = binding };
+        }
+    }
+    
     public static class EventBus<T> where T : struct, IEvent
     {
-        private static EventBinding<T>[] bindings = new EventBinding<T>[64];
-        private static List<Callback> callbacks = new List<Callback>();
-        private static int count;
+        private static List<EventBinding<T>> bindings = new (64);
+        private static List<Callback> callbacks = new();
+        
+        private static uint raiseStackDepth = 0;
+        private static List<EventBindingMutation<T>> mutations = new ();
 
         public class Awaiter : EventBinding<T>
         {
@@ -122,49 +162,65 @@ namespace EventBus
                 Payload = ev;
             }
         }
-
+        
         private struct Callback
         {
             public Action onEventNoArg;
             public Action<T> onEvent;
         }
 
+        // only called when editor state changes 
         private static void Clear()
         {
-            bindings = new EventBinding<T>[64];
+            bindings.Clear();
+            if (bindings.Capacity > 64)
+                bindings.Capacity = 64; // allocates new array
             callbacks.Clear();
-            count = 0;
         }
 
         public static void Register(EventBinding<T> binding)
         {
             if (binding.Registered)
                 return;
-
-            if (bindings.Length <= count)
+            
+            if(raiseStackDepth > 0)
             {
-                EventBinding<T>[] newarray = new EventBinding<T>[bindings.Length * 2];
-                Array.Copy(bindings, newarray, bindings.Length);
-                bindings = newarray;
+                mutations.Add(EventBindingMutation<T>.CreateRegister(binding));
+                return;
+            }
+            binding.InternalIndex = bindings.Count;
+            bindings.Add(binding);
+        }
+        
+        private static void SwapRemoveBindingAt(int index)
+        {
+            int lastIndex = bindings.Count - 1;
+            var removed = bindings[index];
+
+            if (index == lastIndex)
+            {
+                bindings.RemoveAt(lastIndex);
+            }
+            else
+            {
+                var moved = bindings[lastIndex];
+                bindings[index] = moved;
+                bindings.RemoveAt(lastIndex);
+                moved.InternalIndex = index;
             }
 
-            binding.InternalIndex = count;
-            bindings[count] = binding;
-
-            count++;
+            removed.InternalIndex = -1;
         }
 
         public static void AddCallback(Action callback)
         {
-            if (callback == null)
-                return;
+            if (callback == null) return;
             callbacks.Add(new Callback() { onEventNoArg = callback });
         }
 
         public static void AddCallback(Action<T> callback)
         {
-            if (callback == null)
-                return;
+            if (callback == null) return;
             callbacks.Add(new Callback() { onEvent = callback });
         }
 
@@ -175,44 +231,16 @@ namespace EventBus
                 return;
 #endif
             int index = binding.InternalIndex;
+            if (index == -1 || index > bindings.Count) return; // binding invalid
+            if (bindings[index] != binding) return; // binding invalid
 
-            if (index == -1 || index > count)
-            {
-                // binding invalid
-                return;
-            }
-
-            if (bindings[index] != binding)
-            {
-                // binding invalid
-                return;
-            }
-
-            if (index == count - 1)
-            {
-                bindings[count - 1] = null;
-                binding.InternalIndex = -1;
-                count--;
-                return;
-            }
-
-            int lastIndex = count - 1;
-            var last = bindings[lastIndex];
-
-            bindings[index] = last;
-            bindings[lastIndex] = null;
-
-            if (last != null)
-                last.InternalIndex = index;
-            binding.InternalIndex = -1;
-
-            count--;
+            if (raiseStackDepth > 0)
+                mutations.Add(EventBindingMutation<T>.CreateUnregister(binding));
+            else
+                SwapRemoveBindingAt(index);
         }
 
-        public static void Raise()
-        {
-            Raise(default);
-        }
+        public static void Raise(){ Raise(default); }
 
         public static void Raise(T ev)
         {
@@ -220,25 +248,44 @@ namespace EventBus
             if (EventBusUtility.PlayModeState == PlayModeStateChange.ExitingPlayMode)
                 return;
 #endif
-            for (int i = 0; i < count; i++)
+            raiseStackDepth++;
+            try
             {
-                IEventBindingInternal<T> internalBind = bindings[i];
-                internalBind.OnEvent?.Invoke(ev);
-                internalBind.OnEventArgs?.Invoke();
+                for (int i = 0, n = bindings.Count; i < n; i++)
+                {
+                    var internalBind = bindings[i];
+                    internalBind.OnEvent?.Invoke(ev);
+                    internalBind.OnEventArgs?.Invoke();
+                }
+            }
+            finally
+            {
+                raiseStackDepth--;
+                if (raiseStackDepth == 0)
+                {
+                    foreach (var mutation in mutations)
+                    {
+                        if (mutation.Type == EventBindingMutation<T>.MutationType.Register)
+                            Register(mutation.Binding);
+                        else if (mutation.Type == EventBindingMutation<T>.MutationType.Unregister) 
+                            Unregister(mutation.Binding);
+                    }
+                    mutations.Clear();
+                }
             }
 
-            for (int i = 0; i < callbacks.Count; i++)
+            for (int i = 0, n = callbacks.Count; i < n; i++)
             {
-                callbacks[i].onEvent?.Invoke(ev);
-                callbacks[i].onEventNoArg?.Invoke();
+                Callback cb = callbacks[i];
+                cb.onEvent?.Invoke(ev);
+                cb.onEventNoArg?.Invoke();
             }
-
             callbacks.Clear();
         }
 
         public static string GetDebugInfoString()
         {
-            return "Bindings: " + count + " BufferSize: " + bindings.Length + "\n"
+            return "Bindings: " + bindings.Count + " BufferSize: " + bindings.Capacity + "\n"
                 + "Callbacks: " + callbacks.Count;
         }
 
