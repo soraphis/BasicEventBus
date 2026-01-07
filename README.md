@@ -89,4 +89,12 @@ public class EventBusTest : MonoBehaviour
         }
 ```
 
+4. Using Assembly Definitions
+
+once in your custom assembly mark the assembly, such that it can be cleaned up properly in the Editor even without Domain reload
+
+```
+[assembly: EventBus.EventBusAssembly()]
+```
+
 

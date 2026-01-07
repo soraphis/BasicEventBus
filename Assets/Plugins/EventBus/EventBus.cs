@@ -6,10 +6,22 @@ namespace EventBus
     using UnityEngine;
     using EventBus.Internal;
     using System.Collections;
+    using UnityEngine.Pool;
 
 #if UNITY_EDITOR
     using UnityEditor;
 #endif
+
+    /// <summary>
+    /// Marks an assembly containing EventBus types.
+    /// Used to identify relevant assemblies for the EventBus system cleanup steps.
+    /// </summary>
+    [AttributeUsage(AttributeTargets.Assembly)]
+    public class EventBusAssemblyAttribute : Attribute
+    {
+        
+    }
+
 
     public static class EventBusUtility
     {
@@ -39,47 +51,30 @@ namespace EventBus
         public static void Init()
         {
             var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-            Type[] assemblyCSharp = null;
-            Type[] assemblyCSharpFirstpass = null;
+            List<Type[]> assemblyTypesToScan = ListPool<Type[]>.Get();
 
             for (int i = 0; i < assemblies.Length; i++)
             {
-                if (assemblies[i].GetName().Name == "Assembly-CSharp")
-                    assemblyCSharp = assemblies[i].GetTypes();
-                else
-                    if (assemblies[i].GetName().Name == "Assembly-CSharp-firstpass")
-                    assemblyCSharpFirstpass = assemblies[i].GetTypes();
-
-                if (assemblyCSharp != null && assemblyCSharpFirstpass != null)
-                    break;
+                if (assemblies[i].GetName().Name == "Assembly-CSharp" 
+                    || assemblies[i].GetName().Name == "Assembly-CSharp-firstpass" 
+                    || assemblies[i].GetCustomAttribute<EventBusAssemblyAttribute>() is not null)
+                    assemblyTypesToScan.Add(assemblies[i].GetTypes());
             }
 
             List<Type> eventTypes = new List<Type>();
-
-            if (assemblyCSharp != null)
+            foreach (var assemblyTypes in assemblyTypesToScan)
             {
-                for (int i = 0; i < assemblyCSharp.Length; i++)
+                for (int i = 0; i < assemblyTypes.Length; i++)
                 {
-                    var type = assemblyCSharp[i].GetType();
+                    var type = assemblyTypes[i];
                     if ((typeof(IEvent)) != type && (typeof(IEvent)).IsAssignableFrom(type))
                     {
                         eventTypes.Add(type);
                     }
                 }
-            }
 
-            if (assemblyCSharpFirstpass != null)
-            {
-                for (int i = 0; i < assemblyCSharpFirstpass.Length; i++)
-                {
-                    var type = assemblyCSharpFirstpass[i].GetType();
-                    if ((typeof(IEvent)) != type && (typeof(IEvent)).IsAssignableFrom(type))
-                    {
-                        eventTypes.Add(type);
-                    }
-                }
             }
-
+            ListPool<Type[]>.Release(assemblyTypesToScan);
             EventTypes = eventTypes;
 
             List<Type> staticEventBusesTypes = new List<Type>();
@@ -98,7 +93,7 @@ namespace EventBus
         {
             for (int i = 0; i < StaticEventBusesTypes.Count; i++)
             {
-                var type = EventTypes[i];
+                var type = StaticEventBusesTypes[i];
                 var clearMethod = type.GetMethod("Clear", BindingFlags.Static | BindingFlags.NonPublic);
                 clearMethod.Invoke(null, null);
             }
