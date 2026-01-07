@@ -13,17 +13,13 @@
         }
     }
 
-    public class EventBinding<T> : IEventBindingInternal<T> where T : struct, IEvent
+    public class EventBinding<T> : IEventBindingInternal<T>, IDisposable 
+        where T : struct, IEvent
     {
         public int InternalIndex { get; set; } = -1;
 
         public bool Registered => InternalIndex != -1;
 
-        public bool Listen
-        {
-            get => _listen;
-            set => SetListen(value);
-        }
         private bool _listen;
 
         private Action<T> _onEvent;
@@ -31,24 +27,37 @@
 
         Action<T> IEventBindingInternal<T>.OnEvent { get => _onEvent; set => _onEvent = value; }
         Action IEventBindingInternal<T>.OnEventArgs { get => _onEventNoArgs; set => _onEventNoArgs = value; }
+        
+        internal Action<T> OnEvent => _onEvent;
+        internal Action OnEventArgs => _onEventNoArgs;
 
-        public EventBinding(Action<T> onEvent)
+        internal EventBinding(Action<T> onEvent)
         {
             this._onEvent = onEvent;
-            this.Listen = true;
+            Resume();
         }
 
-        public EventBinding(Action onEventNoArgs)
+        internal EventBinding(Action onEventNoArgs)
         {
             this._onEventNoArgs = onEventNoArgs;
-            this.Listen = true;
+            Resume();
         }
+
+        #region PublicAPI
+
+        public static EventBinding<T> Subscribe(Action<T> onEvent) => new(onEvent);
+        public static EventBinding<T> Subscribe(Action onEventNoArgs) => new(onEventNoArgs);
+        public void Dispose() { SetListen(false); _onEvent = null; _onEventNoArgs = null; }
+        public void Pause() => SetListen(false);
+        public void Resume() => SetListen(true);
 
         public void Add(Action<T> onEvent) => _onEvent += onEvent;
         public void Remove(Action<T> onEvent) => _onEvent -= onEvent;
 
         public void Add(Action onEvent) => _onEventNoArgs += onEvent;
         public void Remove(Action onEvent) => _onEventNoArgs -= onEvent;
+        
+        #endregion
 
         private void SetListen(bool value)
         {
@@ -62,8 +71,6 @@
 
             _listen = value;
         }
-
-
 
         public static implicit operator EventBinding<T>(Action onEventNoArgs)
         {
@@ -79,5 +86,6 @@
         {
             return bind != null;
         }
+
     }
 }

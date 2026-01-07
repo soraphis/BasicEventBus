@@ -42,7 +42,7 @@ Check EventBusExample.cs
 
 public class EventBusTest : MonoBehaviour
 {
-          EventBinding<TestEvent> _onTestEvent;
+    EventBinding<TestEvent> _onTestEvent;
 
 
 ```
@@ -53,7 +53,7 @@ public class EventBusTest : MonoBehaviour
 
         private void Awake()
         {
-            _onTestEvent = new EventBinding<TestEvent>(OnEvent);
+            _onTestEvent = EventBinding<TestEvent>.Subscribe(OnEvent);
             // Add couple more listeners to the same binding   
             _onTestEvent.Add(onEventButPrintTheStringInstead);
             _onTestEvent.Add(someUnrelatedMethodWithoutArgs);
@@ -71,21 +71,33 @@ public class EventBusTest : MonoBehaviour
 
             StartCoroutine(CoroutineThatDispatchesEventAfterSomeTime());
             StartCoroutine(CoroutineThatWaitsForEvent());
+
+            _onTestEvent.Dispose();
         }
 ```
 
-3. Control observing state through `Listen`
+3. Observation Lifecycle
 
 ```cs
 
-        private void OnEnable()
+        private void Awake()
         {
-            _onTestEvent.Listen = true;
+            _onTestEvent = EventBinding<TestEvent>.Subscribe(OnEvent);
         }
 
         private void OnDisable()
         {
-            _onTestEvent.Listen = false;
+            _onTestEvent.Pause();
+        }
+
+        private void OnEnable()
+        {
+            _onTestEvent.Resume();
+        }
+
+        private void OnDestroy()
+        {
+            _onTestEvent.Dispose();
         }
 ```
 
