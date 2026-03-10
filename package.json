@@ -1,0 +1,20 @@
+{
+  "name": "com.soraphis.eventbus",
+  "displayName": "Basic Event Bus",
+  "version": "0.2.0",
+  "unity": "6000.0",
+  "description": "A Unity plugin that provides a simple global event bus system for decoupling game logic and improving code organization.",
+  "license": "MIT",
+  "documentationUrl": "https://github.com/soraphis/BasicEventBus#readme",
+  "author": { "name": "Soraphis" },
+  "keywords": [ "event bus", "game logic", "unity", "plugin" ],
+  "dependencies": {
+  },
+  "samples": [
+    {
+        "displayName": "Usage Example",
+        "description": "A simple usage example",
+        "path": "Example~"
+    }
+  ]
+}
