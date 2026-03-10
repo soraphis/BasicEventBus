@@ -1,7 +1,7 @@
 {
   "name": "com.soraphis.eventbus",
   "displayName": "Basic Event Bus",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "unity": "6000.0",
   "description": "A Unity plugin that provides a simple global event bus system for decoupling game logic and improving code organization.",
   "license": "MIT",
